@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 use zip::ZipArchive;
 use parsing_helpers::verification::{Verify, VerificationRoots};
+use crate::parsing_helpers::verification::VerifyWarning;
 
 mod parsing_helpers;
 mod gdtf_xml_scheme;
@@ -81,7 +82,7 @@ pub fn run_gdtf_api_stress_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut verified = 0;
 
     let mut parse_errors: HashMap<String, (usize, Vec<String>)> = HashMap::new();
-    let mut verify_warnings: HashMap<usize, Vec<String>> = HashMap::new();
+    let mut verify_warnings: HashMap<usize, Vec<VerifyWarning>> = HashMap::new();
     let mut multiple_logical_channel_rids: Vec<u64> = Vec::new();
 
     // Wir begrenzen den Testlauf, um keinen IP-Bann zu riskieren
@@ -201,9 +202,9 @@ pub fn run_gdtf_api_stress_test() -> Result<(), Box<dyn std::error::Error>> {
                             .entry(rid as usize)
                             .or_insert_with(Vec::new);
 
-                        if warnings.iter().any(|warning| warning == "Ich hab mehrere LogicalChannel") {
-                        multiple_logical_channel_rids.push(rid);
-                        }
+                        // if warnings.iter().any(|warning| warning == "Ich hab mehrere LogicalChannel") {
+                        // multiple_logical_channel_rids.push(rid);
+                        // }
 
                         if warnings.len() > 0 {
                             entry.extend(warnings);

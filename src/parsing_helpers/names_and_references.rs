@@ -16,7 +16,8 @@ use crate::gdtf_xml_scheme::physical_descriptions::{ColorSpace, DmxProfile, Emit
 use crate::gdtf_xml_scheme::wheels::Wheel;
 use crate::parsing_helpers::{is_invalid_but_gdtf_name_we_allow_it, is_valid_gdtf_name_char};
 use crate::parsing_helpers::names_and_references::PathResult::*;
-use crate::parsing_helpers::verification::{Verify, VerificationRoots};
+use crate::parsing_helpers::verification::{Verify, VerificationRoots, VerifyWarning};
+use crate::parsing_helpers::verification::VerifyWarning::{ConstraintIgnored, FallbackUsed, ProcessingSkipped};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Name(String);
@@ -35,12 +36,12 @@ impl <'de> Deserialize<'de> for Name {
 
 impl Verify for Name {
     fn verify(&mut self, _roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-              -> Result<Vec<String>, String>
+              -> Result<Vec<VerifyWarning>, String>
     {
         let mut warnings = vec![];
         for char in self.0.chars().into_iter() {
             if is_invalid_but_gdtf_name_we_allow_it(char) {
-                warnings.push(format!("Invalid Char in GDTF name: '{}'", char));
+                warnings.push(ConstraintIgnored(format!("Invalid Char in GDTF name: '{}'", char)));
             }
         }
         Ok(warnings)
@@ -263,10 +264,10 @@ impl TopLevelGeometryName {
     ) {
 
         if visited.contains(&reference.geometry) {
-            result.warnings.push(format!(
+            result.warnings.push(ProcessingSkipped(format!(
                 "Circular GeometryReference detected: '{}'.",
                 reference.geometry,
-            ));
+            )));
 
             return;
         }
@@ -295,7 +296,7 @@ pub struct ReferencedGeometry {
 
 pub struct ReferencedGeometries {
     pub geometries: Vec<ReferencedGeometry>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<VerifyWarning>,
 }
 
 impl Default for ReferencedGeometries {
@@ -334,7 +335,7 @@ impl Display for ReferencedGeometries {
 }
 
 fn combine_breaks(
-    old: Option<&[GeometryReferenceDmxBreak]>, new: &[GeometryReferenceDmxBreak], warnings: &mut Vec<String>
+    old: Option<&[GeometryReferenceDmxBreak]>, new: &[GeometryReferenceDmxBreak], warnings: &mut Vec<VerifyWarning>
 ) -> Vec<GeometryReferenceDmxBreak> {
 
     let Some(old) = old else {
@@ -347,10 +348,10 @@ fn combine_breaks(
         let Some(old_break) = old.iter().find(|old_break| {
             old_break.dmx_break == new_break.dmx_break
         }) else {
-            warnings.push(format!(
+            warnings.push(FallbackUsed(format!(
                 "DMX Break {} with Offset {:?} was ignored, because there was no matching Break in previous Reference",
                 new_break.dmx_break, new_break.dmx_offset
-            ));
+            )));
 
             continue;
         };

@@ -251,7 +251,7 @@ pub fn gdtf_verify_derive(input: TokenStream) -> TokenStream {
                             fn verify(
                                 &mut self, roots: &mut crate::parsing_helpers::verification::VerificationRoots,
                                 archive: &mut ZipArchive<Cursor<bytes::Bytes>>
-                            ) -> Result<Vec<String>, String> {
+                            ) -> Result<Vec<crate::parsing_helpers::verification::VerifyWarning>, String> {
                                 let mut warnings = vec![];
                                 #push_start
 
@@ -287,7 +287,7 @@ pub fn gdtf_verify_derive(input: TokenStream) -> TokenStream {
                             fn verify(
                                 &mut self, roots: &mut crate::parsing_helpers::verification::VerificationRoots,
                                 archive: &mut ZipArchive<Cursor<bytes::Bytes>>
-                            ) -> Result<Vec<String>, String> {
+                            ) -> Result<Vec<crate::parsing_helpers::verification::VerifyWarning>, String> {
                                 let mut warnings = vec![];
                                 #push_start
 
@@ -315,7 +315,7 @@ pub fn gdtf_verify_derive(input: TokenStream) -> TokenStream {
                             fn verify(
                                 &mut self, roots: &mut crate::parsing_helpers::verification::VerificationRoots,
                                 archive: &mut ZipArchive<Cursor<bytes::Bytes>>
-                            ) -> Result<Vec<String>, String> {
+                            ) -> Result<Vec<crate::parsing_helpers::verification::VerifyWarning>, String> {
                                 Ok(vec![])
                             }
 
@@ -400,7 +400,7 @@ pub fn gdtf_verify_derive(input: TokenStream) -> TokenStream {
                     fn verify(
                         &mut self, roots: &mut crate::parsing_helpers::verification::VerificationRoots,
                         archive: &mut ZipArchive<Cursor<bytes::Bytes>>
-                    ) -> Result<Vec<String>, String> {
+                    ) -> Result<Vec<crate::parsing_helpers::verification::VerifyWarning>, String> {
                         let mut warnings = vec![];
                         #push_start
 

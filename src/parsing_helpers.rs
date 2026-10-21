@@ -14,11 +14,10 @@ use crate::parsing_helpers::DMXAddress::{Absolute, UniverseAddress};
 use crate::parsing_helpers::DmxValue::{Mirroring, Shifting};
 use arrayvec::ArrayVec;
 use zip::ZipArchive;
-use bytes::Bytes;
 use gdtf_derive::GdtfVerify;
 use crate::parsing_helpers::names_and_references::Name;
 use crate::parsing_helpers::resources::{Resource, ResourceType};
-use verification::{Verify, VerificationRoots};
+use verification::Verify;
 
 pub type Uint = u64;
 pub type Int = i64;
@@ -472,20 +471,6 @@ impl Default for Gender {
     fn default() -> Self {
         Gender(0)
     }
-}
-
-impl Verify for Gender {
-    fn verify(&mut self, _roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
-    {
-        let mut warnings = Vec::new();
-        if !(-1..=1).contains(&self.0) {
-            warnings.push(format!("Invalid Gender. Must be between one of -1, 0 or 1, got {}", self.0));
-        }
-        Ok(warnings)
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {self}
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, GdtfVerify)]

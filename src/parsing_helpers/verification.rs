@@ -1,22 +1,33 @@
 use std::any::{Any, TypeId};
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::io::{Cursor};
 use bytes::Bytes;
 use serde::{Deserialize, Deserializer};
 use zip::ZipArchive;
 use crate::gdtf_xml_scheme::dmx_modes::{DMXMode, LogicalChannel};
-use crate::parsing_helpers::{Int, Uint, Float, DMXOffset, GdtfDate, ColorCie, Resource, ResourceType, BeamType, LaserColorType, WiringObjectComponentType, StructureCrossSectionType, SupportType};
+use crate::parsing_helpers::{
+    Int, Uint, Float, DMXOffset, GdtfDate, ColorCie, Resource, ResourceType, BeamType, LaserColorType,
+    WiringObjectComponentType, StructureCrossSectionType, SupportType, Gender
+};
 use crate::gdtf_xml_scheme::FixtureType;
-use crate::gdtf_xml_scheme::geometries::{BeamGeometry, Geometries, GeometryItem, GeometryReference, InventoryGeometry, LaserGeometry, StructureGeometry, SupportGeometry, WiringObjectChild, WiringObjectGeometry};
+use crate::gdtf_xml_scheme::geometries::{
+    BeamGeometry, Geometries, GeometryItem, GeometryReference, InventoryGeometry, LaserGeometry, StructureGeometry,
+    SupportGeometry, WiringObjectChild, WiringObjectGeometry
+};
 use crate::gdtf_xml_scheme::physical_descriptions::{Emitter, Filter, PhysicalDescriptions};
 use crate::parsing_helpers::defaults::{
     default_beam_angle, default_field_angle, default_rectangle_ratio, default_throw_ratio
 };
-use crate::parsing_helpers::names_and_references::{GeometryName, ModeMasterNodePath, ModelName, Name, Named, NodePath, OptionalNodePath, ResolveNodePath, TopLevelGeometryName};
+use crate::parsing_helpers::names_and_references::{
+    GeometryName, ModeMasterNodePath, ModelName, Name, Named, NodePath, OptionalNodePath, ResolveNodePath,
+    TopLevelGeometryName
+};
 use crate::parsing_helpers::names_and_references::PathResult::*;
 use crate::parsing_helpers::resources::ResourceError::*;
 use crate::parsing_helpers::verification::InitAtVerification::*;
+use crate::parsing_helpers::verification::VerifyWarning::*;
 
 #[derive(Default)]
 pub struct VerificationRoots {
@@ -45,18 +56,47 @@ impl VerificationRoots {
 
 pub trait Verify {
     fn verify(&mut self, _roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {Ok(Vec::new())}
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 pub trait VerifySelf:Verify {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {Ok(Vec::new())}
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {Ok(Vec::new())}
+}
+
+#[derive(Clone)]
+pub enum VerifyWarning {
+    IgnoredExcessInformation(String),
+    ValueCorrected(String),
+    FallbackUsed(String),
+    InvalidInformationDiscarded(String),
+    ProcessingSkipped(String),
+    ConstraintIgnored(String),
+}
+
+impl fmt::Display for VerifyWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IgnoredExcessInformation(reason) =>
+                write!(f, "Ignored Excess Information: {}", reason),
+            ValueCorrected(reason) =>
+                write!(f, "Value Corrected: {}", reason),
+            FallbackUsed(reason) =>
+                write!(f, "Fallback Used: {}", reason),
+            InvalidInformationDiscarded(reason) =>
+                write!(f, "Invalid Information Discarded: {}", reason),
+            ProcessingSkipped(reason) =>
+                write!(f, "Processing Skipped: {}", reason),
+            ConstraintIgnored(reason) =>
+                write!(f, "Constraint Ignored: {}", reason),
+        }
+    }
 }
 
 fn verify_items<'a, I>(items: I, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-    -> Result<Vec<String>, String> where I: IntoIterator<Item=&'a mut dyn Verify>
+    -> Result<Vec<VerifyWarning>, String> where I: IntoIterator<Item=&'a mut dyn Verify>
 {
     let mut warnings = Vec::new();
 
@@ -69,7 +109,7 @@ fn verify_items<'a, I>(items: I, roots: &mut VerificationRoots, archive: &mut Zi
 
 impl<T: Verify + 'static> Verify for Vec<T> {
     fn verify(&mut self, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         verify_items(self.iter_mut().map(|i| i as &mut dyn Verify), roots, archive)
     }
@@ -79,7 +119,7 @@ impl<T: Verify + 'static> Verify for Vec<T> {
 
 impl<T: Verify + 'static, const N: usize> Verify for [T; N] {
     fn verify(&mut self, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         verify_items(self.iter_mut().map(|i| i as &mut dyn Verify), roots, archive)
     }
@@ -89,7 +129,7 @@ impl<T: Verify + 'static, const N: usize> Verify for [T; N] {
 
 impl<T: Verify + 'static> Verify for Option<T> {
     fn verify(&mut self, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         match self {
             Some(value) => value.verify(roots, archive),
@@ -118,7 +158,7 @@ impl Verify for GdtfDate {fn as_any_mut(&mut self) -> &mut dyn Any {self}}
 
 impl Verify for ColorCie {
     fn verify(&mut self, _roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         let mut warnings = Vec::new();
 
@@ -127,10 +167,10 @@ impl Verify for ColorCie {
         } else if self.y < 0.0 || self.y > 1.0 {
             return Err(format!("CIExyY Error: y out of Range [0,1]. Got {}.", self.y))
         } else if self.yy < 0.0 || self.yy > 100.0 {
-            warnings.push(format!(
+            warnings.push(ValueCorrected(format!(
                 "CIExyY Warning: Y out of Range [0,100]. Got {}. Clamped.",
                 self.yy
-            ));
+            )));
 
             self.yy = self.yy.clamp(0.0, 100.0);
         }
@@ -140,13 +180,29 @@ impl Verify for ColorCie {
     fn as_any_mut(&mut self) -> &mut dyn Any {self}
 }
 
+impl Verify for Gender {
+    fn verify(&mut self, _roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
+              -> Result<Vec<VerifyWarning>, String>
+    {
+        let mut warnings = Vec::new();
+        if !(-1..=1).contains(&self.0) {
+            warnings.push(ConstraintIgnored(format!(
+                "Invalid Gender. Must be between one of -1, 0 or 1, got {}", self.0
+            )));
+        }
+        Ok(warnings)
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {self}
+}
+
 impl<T: ResourceType + 'static> Verify for Resource<T> {
     fn verify(&mut self, _roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         match self.get_file(archive) {
             Err(UnzipError(e)) => Err(format!("Unzip error: {}", e)),
-            Err(NoFileFoundError) => Ok(vec![format!("File {} not found. Using default", self.0)]),
+            Err(NoFileFoundError) => Ok(vec![FallbackUsed(format!("File {} not found. Using default", self.0))]),
             Ok(_) => Ok(Vec::new())
         }
     }
@@ -156,7 +212,7 @@ impl<T: ResourceType + 'static> Verify for Resource<T> {
 impl<T: Verify + 'static> Verify for NodePath<T> where FixtureType: ResolveNodePath<T> {
 
     fn verify(&mut self, roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         match self.get_from_roots(roots) {
             Exists(_) => Ok(Vec::new()),
@@ -170,7 +226,7 @@ impl<T: Verify + 'static> Verify for NodePath<T> where FixtureType: ResolveNodeP
 
 impl<T: Verify + 'static> Verify for OptionalNodePath<T> where FixtureType: ResolveNodePath<T> {
     fn verify(&mut self, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-        -> Result<Vec<String>, String>
+        -> Result<Vec<VerifyWarning>, String>
     {
         let mut warnings = Vec::new();
 
@@ -180,9 +236,9 @@ impl<T: Verify + 'static> Verify for OptionalNodePath<T> where FixtureType: Reso
                     warnings.extend(path_warnings);
                 }
                 Err(e) => {
-                    warnings.push(format!(
+                    warnings.push(FallbackUsed(format!(
                         "Optional NodePath reference failed validation and was removed. Original error: {}", e
-                    ));
+                    )));
 
                     self.0 = None;
                 }
@@ -198,7 +254,7 @@ impl<T: Verify + 'static> Verify for OptionalNodePath<T> where FixtureType: Reso
 
 impl Verify for ModeMasterNodePath {
     fn verify(&mut self, roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-              -> Result<Vec<String>, String>
+              -> Result<Vec<VerifyWarning>, String>
     {
         match self.get(roots) {
             Exists(_) => Ok(Vec::new()),
@@ -215,7 +271,7 @@ impl Verify for ModeMasterNodePath {
 
 impl Verify for ModelName {
     fn verify(&mut self, roots: &mut VerificationRoots, archive: &mut ZipArchive<Cursor<Bytes>>)
-              -> Result<Vec<String>, String>
+              -> Result<Vec<VerifyWarning>, String>
     {
         let mut warnings = Vec::new();
         warnings.extend(self.0.verify(roots, archive)?);
@@ -236,7 +292,7 @@ impl Verify for ModelName {
 impl Verify for GeometryName {
 
     fn verify(&mut self, roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-              -> Result<Vec<String>, String>
+              -> Result<Vec<VerifyWarning>, String>
     {
         let Some(geometries) = roots.get_mut_from_type::<FixtureType>()
             .map(|fixture_type| &fixture_type.geometries.geometries)
@@ -258,7 +314,7 @@ impl Verify for GeometryName {
 
 impl Verify for TopLevelGeometryName {
     fn verify(&mut self, roots: &mut VerificationRoots, _archive: &mut ZipArchive<Cursor<Bytes>>)
-              -> Result<Vec<String>, String>
+              -> Result<Vec<VerifyWarning>, String>
     {
         let Some(geometries) = roots.get_mut_from_type::<FixtureType>()
             .map(|fixture_type| &fixture_type.geometries.geometries)
@@ -360,58 +416,73 @@ where
 
 
 impl VerifySelf for Emitter {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
-        let mut warnings = Vec::new();
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
+        let mut warnings: Vec<VerifyWarning> = Vec::new();
 
         if self.color.is_none() && self.dominant_wave_length.is_none() {
-            warnings.push(format!(
+            return Err(format!(
                 "Emitter '{}' is missing required 'DominantWaveLength' because 'Color' is omitted.",
                 self.name
             ));
         }
 
-        for measurement in &self.measurements {
+        self.measurements.retain(|measurement| {
             if measurement.luminous_intensity.is_none() {
-                return Err(format!("Emitter {} has a measurement without luminous intensity", self.name))
+                warnings.push(InvalidInformationDiscarded(format!(
+                    "Emitter {} has a measurement without luminous intensity", self.name
+                )));
+
+                return false;
             }
-            if measurement.transmission.is_some() {
-                warnings.push(format!(
-                    "Emitter {} has a measurement with transmission, which will be ignored", self.name
-                ))
-            }
+
             if measurement.physical_unit.0.eq(&0.0) {
-                warnings.push(format!(
+                warnings.push(InvalidInformationDiscarded(format!(
                     "Emitter '{}' defines a measurement at physical percentage 0. This is redundant and contradicts \
                      DIN SPEC 15800, but processing will continue.", self.name
-                ))
+                )));
+                return false;
             }
-        }
+
+            if measurement.transmission.is_some() {
+                warnings.push(IgnoredExcessInformation(format!(
+                    "Emitter {} has a measurement with transmission, which will be ignored", self.name
+                )))
+            }
+
+            true
+        });
 
         Ok(warnings)
     }
 }
 
 impl VerifySelf for Filter {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
-        for measurement in &self.measurements {
-            if measurement.luminous_intensity.is_some() {
-                warnings.push(format!(
-                    "Filter {} has a measurement with luminous intensity, which will be ignored", self.name
-                ))
-            }
+        self.measurements.retain(|measurement| {
             if measurement.transmission.is_none() {
-                return Err(format!("Filter {} has a measurement without transmission", self.name))
+                warnings.push(InvalidInformationDiscarded(format!(
+                    "Filter {} has a measurement without transmission", self.name
+                )));
+                return false;
             }
-        }
+
+            if measurement.luminous_intensity.is_some() {
+                warnings.push(IgnoredExcessInformation(format!(
+                    "Filter {} has a measurement with luminous intensity, which will be ignored", self.name
+                )));
+            }
+
+            true
+        });
 
         Ok(warnings)
     }
 }
 
 impl VerifySelf for PhysicalDescriptions {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut seen_names = HashSet::new();
 
         if let Some(main_color_space) = &self.color_space {
@@ -435,7 +506,7 @@ impl VerifySelf for PhysicalDescriptions {
 }
 
 impl VerifySelf for BeamGeometry {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
         match self.beam_type {
@@ -444,24 +515,24 @@ impl VerifySelf for BeamGeometry {
                 let field_angle = *self.field_angle.verify_or_default(default_field_angle());
 
                 if beam_angle > field_angle {
-                    warnings.push(format!(
+                    return Err(format!(
                         "Beam '{}' defines a BeamAngle ({}) that is greater than its FieldAngle ({}). This is \
                         physically invalid.", self.name, beam_angle, field_angle
                     ))
                 }
 
                 if self.throw_ratio.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' defines a ThrowRatio, which is only valid for BeamType 'Rectangle'. The value will \
                          be ignored and removed.", self.name
-                    ));
+                    )));
                 }
 
                 if self.rectangle_ratio.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' defines a RectangleRatio, which is only valid for BeamType 'Rectangle'. The value \
                          will be ignored and removed.", self.name
-                    ));
+                    )));
                 }
             }
 
@@ -470,40 +541,40 @@ impl VerifySelf for BeamGeometry {
                 self.rectangle_ratio.verify_or_default(default_rectangle_ratio());
 
                 if self.beam_angle.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'Rectangle' defines a BeamAngle. This property is ignored for rectangular \
                          beams.", self.name
-                    ));
+                    )));
                 }
 
                 if self.field_angle.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'Rectangle' defines a FieldAngle. This property is ignored for rectangular \
                          beams.", self.name
-                    ));
+                    )));
                 }
 
             }
             BeamType::None => {
                 if self.beam_angle.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'None' defines a BeamAngle, which will be ignored.", self.name
-                    ));
+                    )));
                 }
                 if self.field_angle.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'None' defines a FieldAngle, which will be ignored.", self.name
-                    ));
+                    )));
                 }
                 if self.throw_ratio.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'None' defines a ThrowRatio, which will be ignored.", self.name
-                    ));
+                    )));
                 }
                 if self.rectangle_ratio.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Beam '{}' of type 'None' defines a RectangleRatio, which will be ignored.", self.name
-                    ));
+                    )));
                 }
             }
         }
@@ -513,12 +584,12 @@ impl VerifySelf for BeamGeometry {
 }
 
 impl VerifySelf for Geometries {
-    // fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    // fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
     //     let mut seen = HashSet::new();
     //     collect_geometry_names(self.geometries.iter(), &mut seen)?;
     //     Ok(Vec::new())
     // }
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let _refs = TopLevelGeometryName(Name::new("Base").unwrap()).get_referenced_geometries(&*self.geometries);
         Ok(Vec::new())
     }
@@ -539,16 +610,16 @@ fn collect_geometry_names<'a>(
 }
 
 impl VerifySelf for LaserGeometry {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
         match self.color_type {
             LaserColorType::RGB => {
                 if self.color.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Laser '{}' defines a 'Color' value, but its ColorType is 'RGB'. The 'Color' attribute is \
                         only required for 'SingleWaveLength' and will be ignored.", self.name
-                    ));
+                    )));
                 }
             }
             LaserColorType::SingleWaveLength => {
@@ -565,7 +636,7 @@ impl VerifySelf for LaserGeometry {
 
         let (min, max) = (self.beam_divergence_min, self.beam_divergence_max);
         if min > max {
-            warnings.push(format!(
+            return Err(format!(
                 "Laser '{}' defines a BeamDivergenceMin ({}) that is greater than its BeamDivergenceMax ({}). \
                  This is physically invalid.",self.name, min, max
             ))
@@ -576,33 +647,33 @@ impl VerifySelf for LaserGeometry {
 }
 
 impl VerifySelf for WiringObjectGeometry {
-    fn verify_self(&mut self, roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
         if self.component_type != WiringObjectComponentType::Consumer {
             if self.electrical_payload.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'ElectricalPayload', but ComponentType is not 'Consumer'. \
                     Property will be ignored and removed.", self.name
-                ));
+                )));
             }
             if self.voltage_range_max.discard_unverified() | self.voltage_range_min.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines voltage range properties, but ComponentType is not 'Consumer'. \
                     Properties will be ignored and removed.", self.name
-                ));
+                )));
             }
             if self.frequency_range_max.discard_unverified() | self.frequency_range_min.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines frequency range properties, but ComponentType is not 'Consumer'. \
                     Properties will be ignored and removed.", self.name
-                ));
+                )));
             }
             if self.cos_phi.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'CosPhi', but ComponentType is not 'Consumer'. \
                     Property will be ignored and removed.", self.name
-                ));
+                )));
             }
         } else {
             self.electrical_payload.make_verified();
@@ -612,7 +683,7 @@ impl VerifySelf for WiringObjectGeometry {
             self.frequency_range_max.make_verified();
             if let (Verified(min), Verified(max)) = (self.voltage_range_min, self.voltage_range_max) {
                 if min > max {
-                    warnings.push(format!(
+                    return Err(format!(
                         "WiringObject '{}' defines VoltageRangeMin ({}) greater than VoltageRangeMax ({}). This is \
                          physically invalid.", self.name, min, max
                     ));
@@ -620,7 +691,7 @@ impl VerifySelf for WiringObjectGeometry {
             }
             if let (Verified(min), Verified(max)) = (self.frequency_range_min, self.frequency_range_max) {
                 if min > max {
-                    warnings.push(format!(
+                    return Err(format!(
                         "WiringObject '{}' defines FrequencyRangeMin ({}) greater than FrequencyRangeMax ({}). \
                          This is physically invalid.", self.name, min, max
                     ));
@@ -630,16 +701,16 @@ impl VerifySelf for WiringObjectGeometry {
 
         if self.component_type != WiringObjectComponentType::PowerSource {
             if self.max_payload.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'MaxPayload', but ComponentType is not 'PowerSource'. Property will be \
                      ignored and removed.", self.name
-                ));
+                )));
             }
             if self.voltage.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'Voltage', but ComponentType is not 'PowerSource'. Property will be \
                     ignored and removed.", self.name
-                ));
+                )));
             }
         } else {
             self.max_payload.make_verified();
@@ -648,16 +719,16 @@ impl VerifySelf for WiringObjectGeometry {
 
         if self.component_type != WiringObjectComponentType::Fuse {
             if self.fuse_current.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'FuseCurrent', but ComponentType is not 'Fuse'. Property will be \
                     ignored and removed.", self.name
-                ));
+                )));
             }
             if self.fuse_rating.discard_unverified() {
-                warnings.push(format!(
+                warnings.push(IgnoredExcessInformation(format!(
                     "WiringObject '{}' defines 'FuseRating', but ComponentType is not 'Fuse'. Property will be \
                     ignored and removed.", self.name
-                ));
+                )));
             }
         } else {
             self.fuse_current.make_verified();
@@ -668,7 +739,7 @@ impl VerifySelf for WiringObjectGeometry {
         for child in &self.children {
             if let WiringObjectChild::PinPatch(patch) = child {
                 if patch.from_pin > pin_count_this || patch.from_pin < 1 {
-                    warnings.push(format!(
+                    return Err(format!(
                         "WiringObject '{}' contains a PinPatch referencing FromPin '{}', which exceeds the allowed \
                         PinCount range (1-{}).", self.name, patch.from_pin, pin_count_this
                     ));
@@ -688,13 +759,13 @@ impl VerifySelf for WiringObjectGeometry {
                     let pin_count_other = target.pin_count;
 
                     if patch.to_pin > pin_count_other || patch.to_pin < 1 {
-                        warnings.push(format!(
+                        return Err(format!(
                             "WiringObject '{}' contains a PinPatch referencing ToPin '{}', which exceeds the \
                             allowed PinCount range (1-{}) of target '{}'.",
                             self.name, patch.to_pin, pin_count_other, patch.to_wiring_object
                         ));
                     } else {
-                        warnings.push(format!(
+                        return Err(format!(
                             "WiringObject '{}' contains a PinPatch referencing target WiringObject '{}', \
                             which could not be found in the geometry tree.", self.name, patch.to_wiring_object
                         ));
@@ -709,7 +780,7 @@ impl VerifySelf for WiringObjectGeometry {
 }
 
 impl VerifySelf for InventoryGeometry {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         if self.count < 0 {
             Err(format!("WiringObject '{}' contains a count of less than 0. This isn't technically against the \
             Norm, but it doesnt make any sense. How do you have {} of something?", self.name, self.count))
@@ -720,33 +791,33 @@ impl VerifySelf for InventoryGeometry {
 }
 
 impl VerifySelf for StructureGeometry {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
         match self.cross_section_type {
             StructureCrossSectionType::Tube => {
                 if self.truss_cross_section.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Structure '{}' defines a 'TrussCrossSection', but its CrossSectionType is 'Tube'. The \
                         property is only valid for trusses and will be removed.", self.name
-                    ));
+                    )));
                 }
                 self.cross_section_height.make_verified();
                 self.cross_section_wall_thickness.make_verified();
             }
             StructureCrossSectionType::TrussFramework => {
                 if self.cross_section_height.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Structure '{}' defines a 'CrossSectionHeight', but its CrossSectionType is 'TrussFramework'. \
                          The property is only valid for tubes and will be removed.", self.name
-                    ));
+                    )));
                 }
 
                 if self.cross_section_wall_thickness.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Structure '{}' defines a 'CrossSectionWallThickness', but its CrossSectionType is \
                         'TrussFramework'. The property is only valid for tubes and will be removed.", self.name
-                    ));
+                    )));
                 }
 
                 self.truss_cross_section.make_verified();
@@ -758,24 +829,24 @@ impl VerifySelf for StructureGeometry {
 }
 
 impl VerifySelf for SupportGeometry {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
         match self.support_type {
             SupportType::GroundSupport => {
                 // Rope-Eigenschaften bei GroundSupports bereinigen
                 if self.rope_cross_section.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Support '{}' defines a 'RopeCrossSection', but its SupportType is 'GroundSupport'. This \
                         property is only valid for ropes and will be removed.", self.name
-                    ));
+                    )));
                 }
 
                 if self.rope_offset.discard_unverified() {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Support '{}' defines a 'RopeOffset', but its SupportType is 'GroundSupport'. This property is \
                          only valid for ropes and will be removed.", self.name
-                    ));
+                    )));
                 }
                 self.resistance_x.make_verified();
                 self.resistance_y.make_verified();
@@ -793,10 +864,10 @@ impl VerifySelf for SupportGeometry {
                     self.resistance_zz.discard_unverified();
 
                 if has_resistance {
-                    warnings.push(format!(
+                    warnings.push(IgnoredExcessInformation(format!(
                         "Support '{}' defines one or more Resistance properties, but its SupportType is 'Rope'. These \
                         properties are only valid for GroundSupports and will be removed.", self.name
-                    ));
+                    )));
                 }
 
                 self.rope_cross_section.make_verified();
@@ -809,7 +880,7 @@ impl VerifySelf for SupportGeometry {
 }
 
 impl VerifySelf for GeometryReference {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut seen = HashSet::new();
         let mut repeated_once = false;
         for dmx_break in &mut self.dmx_break {
@@ -836,7 +907,7 @@ impl VerifySelf for GeometryReference {
 }
 
 impl VerifySelf for DMXMode {
-    fn verify_self(&mut self, roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
         let mut dmx_offsets = HashSet::new();
 
@@ -869,11 +940,11 @@ impl VerifySelf for DMXMode {
 }
 
 impl VerifySelf for LogicalChannel {
-    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<String>, String> {
+    fn verify_self(&mut self, _roots: &mut VerificationRoots) -> Result<Vec<VerifyWarning>, String> {
         let mut warnings = Vec::new();
 
 
-        warnings.push("Oh no, isn't implemented".into());
+        warnings.push(ConstraintIgnored("Oh no, isn't implemented".into()));
 
         Ok(warnings)
     }
